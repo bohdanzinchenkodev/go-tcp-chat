@@ -71,9 +71,9 @@ func handleConnection(chatC *chatConn) {
 	scanner := bufio.NewScanner(chatC.conn)
 
 	for scanner.Scan() {
-		readStr := scanner.Text() + "\n" // add newline back for display
+		readStr := scanner.Text() + "\n"
 
-		// broadcast readStr to others (your existing logic)
+		// broadcast readStr to others
 		broadcast(chatC, readStr)
 	}
 	if err := scanner.Err(); err != nil {
