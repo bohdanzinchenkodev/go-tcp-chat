@@ -13,8 +13,9 @@ import (
 )
 
 var (
-	conns   = make(map[string]*chatConn)
-	connsMu sync.RWMutex
+	conns      = make(map[string]*chatConn)
+	connsMu    sync.RWMutex
+	usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,20}$`)
 )
 
 type chatConn struct {
@@ -74,7 +75,7 @@ func handleConnection(chatC *chatConn) {
 	scanner := bufio.NewScanner(chatC.conn)
 
 	//collect username
-	sendMessage(chatC, "Please Type Your username\n")
+	systemMessage(chatC, "Please type your username:\n")
 
 	for scanner.Scan() {
 		readStr := scanner.Text()
@@ -85,15 +86,15 @@ func handleConnection(chatC *chatConn) {
 			readStr = strings.TrimSpace(readStr)
 			usernameErr := validateUsername(readStr)
 			if usernameErr != "" {
-				sendMessage(chatC, usernameErr)
+				systemMessage(chatC, usernameErr)
 				continue
 			}
 			//set username and send hello message
 			chatC.username = readStr
-			sendMessage(chatC, "Welcome To Chat, "+chatC.username+"!\n")
+			systemMessage(chatC, "Welcome To Chat, "+chatC.username+"!\n")
 
 			//notify chat users about new chatter
-			readStr += " joins\n"
+			readStr = formatSystemMessage(readStr) + " joining the chat\n"
 		} else {
 			readStr = "[" + chatC.username + "]" + readStr + "\n"
 		}
@@ -103,6 +104,13 @@ func handleConnection(chatC *chatConn) {
 	if err := scanner.Err(); err != nil {
 		fmt.Println("read error:", err)
 	}
+}
+func systemMessage(chatC *chatConn, message string) {
+	message = formatSystemMessage(message)
+	sendMessage(chatC, message)
+}
+func formatSystemMessage(message string) string {
+	return "[system] " + message
 }
 func sendMessage(chatC *chatConn, message string) {
 	select {
@@ -116,7 +124,7 @@ func sendMessage(chatC *chatConn, message string) {
 func validateUsername(username string) string {
 	if username == "" {
 		return "username cannot be empty\n"
-	} else if usernameRe := regexp.MustCompile(`^[a-zA-Z0-9_-]{1,20}$`); !usernameRe.MatchString(username) {
+	} else if !usernameRe.MatchString(username) {
 		return "Invalid username. Use letters, numbers, _ or -, max 20 chars.\n"
 	}
 	return ""
@@ -148,6 +156,9 @@ func writePump(chatC *chatConn) {
 
 func deleteConnection(chatC *chatConn) {
 	chatC.closeOnce.Do(func() {
+		if chatC.username != "" {
+			broadcast(chatC, formatSystemMessage(chatC.username+" leaving the chat\n"))
+		}
 		fmt.Printf("closing connection: %v\n", chatC.id)
 		//close channel
 		close(chatC.send)
