@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -20,6 +22,7 @@ type chatConn struct {
 	id        string
 	send      chan string
 	closeOnce sync.Once
+	username  string
 }
 
 func newChatConn(conn net.Conn) *chatConn {
@@ -70,34 +73,66 @@ func handleConnection(chatC *chatConn) {
 	defer deleteConnection(chatC)
 	scanner := bufio.NewScanner(chatC.conn)
 
-	for scanner.Scan() {
-		readStr := scanner.Text() + "\n"
+	//collect username
+	sendMessage(chatC, "Please Type Your username\n")
 
-		// broadcast readStr to others
+	for scanner.Scan() {
+		readStr := scanner.Text()
+
+		//if username is empty set it
+		if chatC.username == "" {
+			//validate username
+			readStr = strings.TrimSpace(readStr)
+			usernameErr := validateUsername(readStr)
+			if usernameErr != "" {
+				sendMessage(chatC, usernameErr)
+				continue
+			}
+			//set username and send hello message
+			chatC.username = readStr
+			sendMessage(chatC, "Welcome To Chat, "+chatC.username+"!\n")
+
+			//notify chat users about new chatter
+			readStr += " joins\n"
+		} else {
+			readStr = "[" + chatC.username + "]" + readStr + "\n"
+		}
 		broadcast(chatC, readStr)
+
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Println("read error:", err)
 	}
+}
+func sendMessage(chatC *chatConn, message string) {
+	select {
+	case chatC.send <- message:
 
+	default:
+		deleteConnection(chatC)
+	}
+
+}
+func validateUsername(username string) string {
+	if username == "" {
+		return "username cannot be empty\n"
+	} else if usernameRe := regexp.MustCompile(`^[a-zA-Z0-9_-]{1,20}$`); !usernameRe.MatchString(username) {
+		return "Invalid username. Use letters, numbers, _ or -, max 20 chars.\n"
+	}
+	return ""
 }
 func broadcast(sender *chatConn, message string) {
 	connsMu.RLock()
 	targets := make([]*chatConn, 0, len(conns))
 	for _, c := range conns {
-		if c != sender {
+		if c != sender && c.username != "" {
 			targets = append(targets, c)
 		}
 	}
 
 	connsMu.RUnlock()
 	for _, c := range targets {
-		select {
-		case c.send <- message:
-
-		default:
-			deleteConnection(c)
-		}
+		sendMessage(c, message)
 	}
 }
 func writePump(chatC *chatConn) {
