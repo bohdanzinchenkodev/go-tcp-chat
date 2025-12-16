@@ -64,15 +64,10 @@ func disconnectEvent(chatC *hub.ChatConn) {
 func readPump(chatC *hub.ChatConn) {
 	scanner := bufio.NewScanner(chatC.Conn)
 	for scanner.Scan() {
-		select {
-		case hub.EventChan <- hub.ChatEvent{
+		hub.EventChan <- hub.ChatEvent{
 			ChatC:     chatC,
 			EventType: hub.RawInputE,
 			Input:     scanner.Text(),
-		}:
-		default:
-			disconnect(chatC)
-			return
 		}
 	}
 	disconnect(chatC)
@@ -92,6 +87,5 @@ func disconnect(chatC *hub.ChatConn) {
 	if err != nil {
 		return
 	}
-	close(chatC.Write)
 	disconnectEvent(chatC)
 }

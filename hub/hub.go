@@ -95,6 +95,7 @@ func disconnect(e *ChatEvent) {
 	broadcast(e.ChatC, formatSystemMessage(e.ChatC.Username+" just left the room.\n"))
 	delete(r.users, e.ChatC.Id)
 	e.ChatC.CurrentRoom = ""
+	close(e.ChatC.Write)
 
 }
 func processRawInput(e *ChatEvent) {
@@ -137,6 +138,10 @@ func processCmd(e *ChatEvent) {
 		roomNamesStr := strings.Join(roomNames, "\n")
 		writeToConn(e.ChatC, roomNamesStr+"\n")
 	case CmdJoin:
+		if e.ChatC.CurrentRoom != "" {
+			writeToConn(e.ChatC, "You are already in a room. Please leave it before joining another one.\n")
+			return
+		}
 		if len(args) < 2 {
 			writeToConn(e.ChatC, "Please provide a room name to join.\n")
 			return
