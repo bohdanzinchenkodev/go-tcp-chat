@@ -35,12 +35,9 @@ type room struct {
 }
 
 const (
-	ConnectE     = "connect"
-	ChatMessageE = "chatMessage"
-	SetUsernameE = "setUsername"
-	CmdE         = "cmd"
-	RawInputE    = "rawInput"
-	DisconnectE  = "disconnect"
+	ConnectE    = "connect"
+	RawInputE   = "rawInput"
+	DisconnectE = "disconnect"
 )
 const (
 	CmdRooms = "rooms"
