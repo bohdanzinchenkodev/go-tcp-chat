@@ -3,36 +3,11 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"go-tcp-chat/hub"
 	"net"
 	"os"
-	"regexp"
-	"strings"
-	"sync"
-
-	"github.com/google/uuid"
 )
 
-var (
-	conns      = make(map[string]*chatConn)
-	connsMu    sync.RWMutex
-	usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,20}$`)
-)
-
-type chatConn struct {
-	conn      net.Conn
-	id        string
-	send      chan string
-	closeOnce sync.Once
-	username  string
-}
-
-func newChatConn(conn net.Conn) *chatConn {
-	return &chatConn{
-		conn: conn,
-		id:   uuid.New().String(),
-		send: make(chan string, 16),
-	}
-}
 func main() {
 	args := os.Args
 
@@ -47,9 +22,13 @@ func main() {
 		fmt.Printf("Error starting server: %v\n", listenErr)
 		os.Exit(0)
 	}
+	hub.AddRoom("room1")
+	hub.AddRoom("room2")
+	hub.AddRoom("room3")
+	go hub.StartEngine()
 
 	for {
-		fmt.Println("Waiting for connection...")
+		fmt.Println("Waiting for connection...\n")
 
 		conn, acceptErr := ln.Accept()
 		if acceptErr != nil {
@@ -57,119 +36,59 @@ func main() {
 			continue
 		}
 
-		connsMu.Lock()
-		chatC := newChatConn(conn)
-		conns[chatC.id] = chatC
-		connsMu.Unlock()
+		chatC := hub.NewChatConn(conn)
+		connectEvent(chatC)
 
-		fmt.Printf("Connection accepted: %v\n", chatC.id)
+		fmt.Printf("Connection accepted: %v\n", chatC.Id)
 
-		go handleConnection(chatC)
+		go readPump(chatC)
 		go writePump(chatC)
+		/*go eventFromRead(chatC)*/
 	}
-
+}
+func connectEvent(chatC *hub.ChatConn) {
+	ce := hub.ChatEvent{
+		ChatC:     chatC,
+		EventType: hub.ConnectE,
+	}
+	hub.EventChan <- ce
+}
+func disconnectEvent(chatC *hub.ChatConn) {
+	ce := hub.ChatEvent{
+		ChatC:     chatC,
+		EventType: hub.DisconnectE,
+	}
+	hub.EventChan <- ce
 }
 
-func handleConnection(chatC *chatConn) {
-	defer deleteConnection(chatC)
-	scanner := bufio.NewScanner(chatC.conn)
-
-	//collect username
-	systemMessage(chatC, "Please type your username:\n")
-
+func readPump(chatC *hub.ChatConn) {
+	scanner := bufio.NewScanner(chatC.Conn)
 	for scanner.Scan() {
-		readStr := scanner.Text()
-
-		//if username is empty set it
-		if chatC.username == "" {
-			//validate username
-			readStr = strings.TrimSpace(readStr)
-			usernameErr := validateUsername(readStr)
-			if usernameErr != "" {
-				systemMessage(chatC, usernameErr)
-				continue
-			}
-			//set username and send hello message
-			chatC.username = readStr
-			systemMessage(chatC, "Welcome To Chat, "+chatC.username+"!\n")
-
-			//notify chat users about new chatter
-			readStr = formatSystemMessage(readStr) + " joining the chat\n"
-		} else {
-			readStr = "[" + chatC.username + "]" + readStr + "\n"
-		}
-		broadcast(chatC, readStr)
-
-	}
-	if err := scanner.Err(); err != nil {
-		fmt.Println("read error:", err)
-	}
-}
-func systemMessage(chatC *chatConn, message string) {
-	message = formatSystemMessage(message)
-	sendMessage(chatC, message)
-}
-func formatSystemMessage(message string) string {
-	return "[system] " + message
-}
-func sendMessage(chatC *chatConn, message string) {
-	select {
-	case chatC.send <- message:
-
-	default:
-		deleteConnection(chatC)
-	}
-
-}
-func validateUsername(username string) string {
-	if username == "" {
-		return "username cannot be empty\n"
-	} else if !usernameRe.MatchString(username) {
-		return "Invalid username. Use letters, numbers, _ or -, max 20 chars.\n"
-	}
-	return ""
-}
-func broadcast(sender *chatConn, message string) {
-	connsMu.RLock()
-	targets := make([]*chatConn, 0, len(conns))
-	for _, c := range conns {
-		if c != sender && c.username != "" {
-			targets = append(targets, c)
+		select {
+		case hub.EventChan <- hub.ChatEvent{
+			ChatC:     chatC,
+			EventType: hub.RawInputE,
+			Input:     scanner.Text(),
+		}:
+		default:
+			disconnect(chatC)
+			return
 		}
 	}
-
-	connsMu.RUnlock()
-	for _, c := range targets {
-		sendMessage(c, message)
-	}
+	disconnect(chatC)
 }
-func writePump(chatC *chatConn) {
-	for message := range chatC.send {
-		_, writeErr := chatC.conn.Write([]byte(message))
+func writePump(chatC *hub.ChatConn) {
+	for message := range chatC.Write {
+		_, writeErr := chatC.Conn.Write([]byte(message))
 		if writeErr != nil {
 			fmt.Println("Error writing to connection:", writeErr.Error())
-			deleteConnection(chatC)
+			disconnect(chatC)
 			return
 		}
 	}
 }
-
-func deleteConnection(chatC *chatConn) {
-	chatC.closeOnce.Do(func() {
-		if chatC.username != "" {
-			broadcast(chatC, formatSystemMessage(chatC.username+" leaving the chat\n"))
-		}
-		fmt.Printf("closing connection: %v\n", chatC.id)
-		//close channel
-		close(chatC.send)
-		//close connection
-		err := chatC.conn.Close()
-		if err != nil {
-			fmt.Printf("error while closing connection: %v\n", err.Error())
-		}
-		//delete connection from map
-		connsMu.Lock()
-		delete(conns, chatC.id)
-		connsMu.Unlock()
-	})
+func disconnect(chatC *hub.ChatConn) {
+	chatC.Conn.Close()
+	close(chatC.Write)
+	disconnectEvent(chatC)
 }
