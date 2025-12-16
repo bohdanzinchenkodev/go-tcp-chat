@@ -83,9 +83,8 @@ func writePump(chatC *hub.ChatConn) {
 	}
 }
 func disconnect(chatC *hub.ChatConn) {
-	err := chatC.Conn.Close()
-	if err != nil {
-		return
-	}
-	disconnectEvent(chatC)
+	chatC.CloseOnce.Do(func() {
+		_ = chatC.Conn.Close()
+		disconnectEvent(chatC)
+	})
 }

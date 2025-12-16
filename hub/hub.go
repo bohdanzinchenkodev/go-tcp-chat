@@ -4,6 +4,7 @@ import (
 	"net"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -14,6 +15,7 @@ type ChatConn struct {
 	Write       chan string
 	Username    string
 	CurrentRoom string
+	CloseOnce   sync.Once
 }
 type ChatEvent struct {
 	ChatC     *ChatConn
@@ -87,14 +89,16 @@ func connect(e *ChatEvent) {
 }
 func disconnect(e *ChatEvent) {
 	delete(conns, e.ChatC.Id)
-	roomName := e.ChatC.CurrentRoom
-	r, exists := rooms[roomName]
-	if !exists {
-		return
+
+	if roomName := e.ChatC.CurrentRoom; roomName != "" {
+		if r, ok := rooms[roomName]; ok {
+			broadcast(e.ChatC, formatSystemMessage(e.ChatC.Username+" just left the room.\n"))
+			delete(r.users, e.ChatC.Id)
+		}
+		e.ChatC.CurrentRoom = ""
 	}
-	broadcast(e.ChatC, formatSystemMessage(e.ChatC.Username+" just left the room.\n"))
-	delete(r.users, e.ChatC.Id)
-	e.ChatC.CurrentRoom = ""
+
+	_ = e.ChatC.Conn.Close()
 	close(e.ChatC.Write)
 
 }
